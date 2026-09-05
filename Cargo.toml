@@ -1,0 +1,10 @@
+[package]
+name = "abr-language-structure"
+version = "1.0.0"
+edition = "2021"
+authors = ["Metatron Dynamics, Inc."]
+description = "ABR language structure measurement — relational width from token co-occurrence accumulation"
+
+[[bin]]
+name = "abr_language_structure"
+path = "src/main.rs"
