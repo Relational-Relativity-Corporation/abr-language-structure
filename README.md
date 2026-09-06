@@ -1,65 +1,91 @@
 # abr-language-structure
-
-**ABR Language Structure — V1.0**
-
+**ABR Language Structure — V3.2**
 Metatron Dynamics, Inc. · Bounded over D. No claim beyond D.
+
+## What This Establishes
+
+Two experimental findings, formally tested:
+
+**Finding 1 — Structural Δ can be content-independent.**
+The same intervention applied to sequences with completely different locus
+identities produces structurally identical Δ. The measurement depends on
+the relational transformation, not what the loci contain.
+
+**Finding 2 — Adjacency Δ is insufficient for coherence discrimination.**
+Adjacency topology is content-blind. It cannot distinguish a causally
+coherent sentence sequence from an accidentally ordered one. This closes
+OC-INT-1 experimentally and declares exactly what additional relation
+must be established next.
 
 ## Declaration
 
-Coherence is a relational property, not a linguistic one.
+**Observable:** the change in declared adjacency relations produced by a
+known intervention on an ordered sequence of loci.
 
-Two loci are coherent if their co-occurrence in the declared sequence
-is stable across exposures. M measures the state at each locus as the
-token identity — the word itself, lowercased. No embedding. No borrowed
-structure. No NLP heuristics.
+**Locus:** any declared position in a sequence — character, word, or sentence.
+The measurement does not depend on which.
 
-**ρ_n(i,j)** = 1.0 if token j appears within declared proximity W of
-token i in this pass. 0.0 otherwise.
+**Edge profile:** for a sequence of n loci, the edge profile is a vector of
+n-1 directed pairs: `profile[k] = (L_k, L_{k+1})`.
 
-**Accumulation rule** (Origin-declared):
+**Δ between reference and variant:**
+```
+disrupted[k] = true  if profile_ref[k] ≠ profile_var[k]
+             = false otherwise
+```
 
-    ρ_acc(token_i, token_j) ←
-        ρ_acc(token_i, token_j) + η · ρ_n · (1 − ρ_acc(token_i, token_j))
+Locus identity is used only to key edge pairs. It is not a semantic variable.
 
-EdgeStore is keyed by **token identity pair**, not position pair.
-Coherence is a property of which tokens relate to which — not of
-where they happened to sit in one particular sequence.
+**Scale invariance (observed, not confirmed):**
+`Δ_T(1,2)^char ≅ Δ_T(1,2)^word ≅ Δ_T(1,2)^sentence`
+for declared structural observables. Paragraph and above: pending.
 
-**Admission**: edge (token_i, token_j) admitted if ρ_acc ≥ θ_min.
+## Intervention Types
 
-**k per locus**: count of admitted targets from each source token type.
+```
+Transposition(i, j)  — swap loci at positions i and j
+Displacement(i, j)   — move locus at position i to position j,
+                        shifting intervening loci
+```
 
-**Mean k**: mean admitted relational width across source token types.
+The intervention is performed by the researcher. Ground truth is known.
+This is the experimental advantage over open passage analysis.
 
-## What This Measures
+## Modules
 
-If coherence in language is real and bounded, coherent text should
-produce small, stable k — the same token pairs consistently co-occur
-within declared proximity.
-
-Incoherent text — same words, order destroyed — lacks that pattern.
-Pairs co-occur randomly. ρ_acc does not accumulate reliably. k stays
-large or uneven.
-
-The gap between k and n, at transformer scale, is what quadratic
-attention wastes computation on. This is the first measurement of
-that gap from declared relational structure alone.
-
-## Open Conditions
-
-- **OC-COH-1**: Window W is Origin-declared, not derived. Its exact
-  value is an open condition. Current default: W=4.
-- **OC-COH-2**: θ_min inherited from abr-relational-attention (0.05).
-  Not yet calibrated for this domain.
-- **OC-COH-3**: Binary ρ_n ∈ {0,1} is the simplest declaration.
-  A graded ρ_n decaying with distance within W is a Phase 2 candidate.
+| File | Contents |
+|------|----------|
+| `src/intervention.rs` | Resolution-independent intervention runner (V3.2) |
+| `src/character.rs` | Character-resolution edge profile comparison (V2.2) |
+| `src/state.rs` | Relational state vector experiment (V3.0, informative) |
+| `src/coherence.rs` | Original accumulation-based coherence (V2.0, superseded) |
 
 ## Build and Run
 
 ```
-cargo test
+cargo test        # 36 tests across all modules
 cargo run --release
 ```
 
-To test your own passages, edit the `coherent` and `incoherent`
-strings in `src/main.rs`. Any text works — no preprocessing required.
+## Open Conditions
+
+- **OC-INT-1**: CLOSED — adjacency topology is content-blind. Cannot
+  distinguish causal from accidental sequence. Next declared relation
+  required for that discrimination.
+- **OC-INT-2**: Locus identity keys edges only — not a semantic variable.
+- **OC-INT-3**: Interventions are researcher-declared. Ground truth known.
+- **OC-SCALE**: Scale invariance observed for tested interventions across
+  character, word, and sentence resolutions. Paragraph and above: pending.
+- **OC-NEXT**: What relation distinguishes causal from accidental sequence
+  under identical controlled intervention? That is the next experiment.
+
+## Version History
+
+| Version | Description |
+|---------|-------------|
+| V1.0 | Accumulation-based coherence, token co-occurrence, mean k |
+| V2.0 | Field coherence — triple sampling, grounded/ungrounded |
+| V2.2 | Character-resolution edge profile comparison |
+| V3.0 | Relational state vector X_i — disconnection ratio |
+| V3.1 | Controlled intervention runner — scale invariance observed |
+| V3.2 | Content independence confirmed; OC-INT-1 closed experimentally |
