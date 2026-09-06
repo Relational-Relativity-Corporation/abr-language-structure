@@ -1,135 +1,175 @@
 // coherence.rs — Metatron Dynamics, Inc.
-// ABR Language Structure — V1.0
+// ABR Language Structure — V2.0
 // Bounded over D. No claim beyond D.
 //
 // ── Declaration ──────────────────────────────────────────────────────────────
 //
-// Locus: a declared position in a text sequence.
-//   Observable: token identity (the word itself, lowercased).
-//   M maps position i in the sequence to its token string.
+// Locus: a declared position i in a text sequence.
+//   Observable at i: token identity (the word itself, lowercased).
 //   No embedding. No borrowed structure.
 //
-// Proximity: locus j is within proximity of locus i if
-//   0 < (j - i) <= W, where W is the declared window.
-//   Direction: causal — j follows i in the sequence.
+// Adjacent pair: (token_i, token_{i+1}) — the relation between
+//   a locus and the one immediately following it.
+//   Window W = 1. Direction: causal — j = i+1 only.
 //
-// ρ_n(i,j): relational evidence per pass.
-//   ρ_n = 1.0 if token at j is within W of token at i.
-//   ρ_n = 0.0 otherwise.
-//   Keyed by (token_i, token_j) — token identity pair, not position pair.
-//   This is the correct keying: coherence is a property of the token
-//   relation, not of the particular positions they occupy in one sequence.
+// ρ_n(i, i+1): relational evidence at each step.
+//   ρ_n = 1.0 if the pair (token_i, token_{i+1}) is observed.
+//   Keyed by token identity pair, not position pair.
 //
 // Accumulation rule (Origin-declared):
-//   ρ_acc(token_i, token_j) ←
-//     ρ_acc(token_i, token_j) + η · ρ_n · (1 − ρ_acc(token_i, token_j))
+//   ρ_acc(token_i, token_{i+1}) ←
+//     ρ_acc(token_i, token_{i+1}) + η · ρ_n · (1 − ρ_acc(token_i, token_{i+1}))
 //
-// Admission: edge (token_i, token_j) is admitted if ρ_acc >= θ_min.
+// Admission: pair (token_i, token_{i+1}) is grounded if ρ_acc >= θ_min.
+//   On first encounter: ρ_acc rises to η = 0.1, which exceeds θ_min = 0.05.
+//   So a pair is grounded the first time it is seen, and strengthens on recurrence.
 //
-// k_i: admitted edge count from token_i = |{j : ρ_acc(i,j) >= θ_min}|
-// mean_k: mean admitted width across all source token types in the sequence.
+// ── Field Coherence ──────────────────────────────────────────────────────────
+//
+// Coherence is a field condition, sampleable at any locus.
+// At each interior locus i (where i-1 and i+1 both exist):
+//   Sample the triple (token_{i-1}, token_i, token_{i+1}).
+//   Left transition:  (token_{i-1}, token_i)   — grounded or not.
+//   Right transition: (token_i,     token_{i+1}) — grounded or not.
+//   Coherent at i: both transitions grounded at time of sampling.
+//   Incoherent at i: either transition ungrounded at time of sampling.
+//
+// Passage coherence ratio: proportion of interior loci that are coherent.
+//
+// Open Conditions:
+//   OC-COH-1: θ_min = 0.05. Inherited. Not yet calibrated for this domain.
+//   OC-COH-2: η = 0.1. Single-pass accumulation per adjacent pair.
+//             Grounding on first encounter is a consequence, not a design choice.
+//             Whether grounding should require recurrence is an open question.
+//   OC-COH-3: Direction is causal (i → i+1 only). Symmetric keying
+//             is a Phase 2 candidate if the field proves non-directional.
 
 use std::collections::HashMap;
 
-/// Origin-declared configuration. W and θ_min are open conditions.
+/// Origin-declared configuration.
 pub struct CoherenceConfig {
-    /// Proximity window W — declared, not derived. OC-COH-1.
-    pub window: usize,
-    /// Admission threshold θ_min. OC-COH-2.
+    /// Admission threshold θ_min. OC-COH-1.
     pub theta_min: f64,
-    /// Accumulation rate η.
+    /// Accumulation rate η. OC-COH-2.
     pub eta: f64,
-    /// Number of passes through the sequence.
-    pub passes: usize,
+}
+
+/// Coherence reading at a single interior locus.
+pub struct LociReading {
+    /// Position in the sequence (1-indexed for display).
+    pub position: usize,
+    /// The triple of tokens sampled.
+    pub left: String,
+    pub center: String,
+    pub right: String,
+    /// Whether the left transition (left → center) is grounded.
+    pub left_grounded: bool,
+    /// Whether the right transition (center → right) is grounded.
+    pub right_grounded: bool,
+    /// Both transitions grounded — coherent at this locus.
+    pub coherent: bool,
 }
 
 /// Result of a coherence measurement run.
 pub struct CoherenceResult {
-    /// Token sequence (words in order).
+    /// Token sequence.
     pub tokens: Vec<String>,
-    /// ρ_acc for each admitted (token_i, token_j) pair.
+    /// ρ_acc for each observed adjacent pair.
     pub rho_acc: HashMap<(String, String), f64>,
-    /// Admitted edge count per source token type.
-    pub k_per_token: HashMap<String, usize>,
-    /// Mean admitted relational width across source tokens.
-    pub mean_k: f64,
-    /// Total unique token-pair relations evaluated.
-    pub total_pairs_evaluated: usize,
-    /// Total admitted edges.
-    pub total_admitted: usize,
+    /// Per-locus readings (interior loci only).
+    pub readings: Vec<LociReading>,
+    /// Proportion of interior loci that are coherent.
+    pub coherence_ratio: f64,
+    /// Count of coherent interior loci.
+    pub coherent_count: usize,
+    /// Total interior loci sampled.
+    pub interior_count: usize,
 }
 
 /// Tokenize: lowercase, split on whitespace.
 /// No stemming, no stop-word removal, no linguistic processing.
-fn tokenize(text: &str) -> Vec<String> {
+pub fn tokenize(text: &str) -> Vec<String> {
     text.split_whitespace()
         .map(|w| w.to_lowercase())
         .collect()
 }
 
 /// Run coherence measurement on a text passage.
+/// Sequential: accumulate each adjacent pair as we walk the sequence,
+/// then sample the field at each interior locus.
 pub fn measure_coherence(text: &str, config: &CoherenceConfig) -> CoherenceResult {
     let tokens = tokenize(text);
     let n = tokens.len();
 
-    // EdgeStore: keyed by token identity pair (not position pair).
-    // Coherence is a property of which tokens relate to which,
-    // not of where they happened to sit in this particular sequence.
+    if n < 3 {
+        return CoherenceResult {
+            tokens,
+            rho_acc: HashMap::new(),
+            readings: vec![],
+            coherence_ratio: 0.0,
+            coherent_count: 0,
+            interior_count: 0,
+        };
+    }
+
+    // Walk the sequence left to right.
+    // At each position i, accumulate the pair (token_i, token_{i+1}),
+    // then sample the field at i (if i is an interior locus: i >= 1).
+    //
+    // This is the sequential read: accumulation happens before sampling
+    // at each step, so the field condition at i reflects what has been
+    // established up to and including the current pair.
+
     let mut rho_acc: HashMap<(String, String), f64> = HashMap::new();
+    let mut readings: Vec<LociReading> = Vec::new();
 
-    let mut total_pairs_evaluated = 0usize;
+    for i in 0..(n - 1) {
+        // Accumulate the adjacent pair at this step.
+        let ti = tokens[i].clone();
+        let ti1 = tokens[i + 1].clone();
+        let entry = rho_acc.entry((ti, ti1)).or_insert(0.0);
+        *entry += config.eta * (1.0 - *entry);
 
-    // Run accumulation passes.
-    for _ in 0..config.passes {
-        // For each source locus i, scan forward within window W.
-        for i in 0..n {
-            for j in (i + 1)..=(i + config.window).min(n - 1) {
-                let ti = tokens[i].clone();
-                let tj = tokens[j].clone();
+        // Sample the field at locus i (interior: has both left and right).
+        if i >= 1 {
+            let left   = tokens[i - 1].clone();
+            let center = tokens[i].clone();
+            let right  = tokens[i + 1].clone();
 
-                // ρ_n = 1.0: j is within declared proximity of i.
-                let rho_n = 1.0_f64;
+            let left_rho  = rho_acc.get(&(left.clone(), center.clone())).copied().unwrap_or(0.0);
+            let right_rho = rho_acc.get(&(center.clone(), right.clone())).copied().unwrap_or(0.0);
 
-                let entry = rho_acc.entry((ti, tj)).or_insert(0.0);
-                *entry += config.eta * rho_n * (1.0 - *entry);
-                total_pairs_evaluated += 1;
-            }
+            let left_grounded  = left_rho  >= config.theta_min;
+            let right_grounded = right_rho >= config.theta_min;
+            let coherent = left_grounded && right_grounded;
+
+            readings.push(LociReading {
+                position: i + 1,
+                left,
+                center,
+                right,
+                left_grounded,
+                right_grounded,
+                coherent,
+            });
         }
     }
 
-    // Read admitted edges: ρ_acc >= θ_min.
-    // k per source token type: how many distinct targets are admitted.
-    let mut k_per_token: HashMap<String, usize> = HashMap::new();
-    let mut total_admitted = 0usize;
-
-    for ((ti, _tj), &rho) in &rho_acc {
-        if rho >= config.theta_min {
-            *k_per_token.entry(ti.clone()).or_insert(0) += 1;
-            total_admitted += 1;
-        }
-    }
-
-    // Mean k across source token types that appear in the sequence.
-    // Only count token types that actually appear as sources.
-    let source_types: std::collections::HashSet<String> =
-        tokens.iter().cloned().collect();
-
-    let mean_k = if source_types.is_empty() {
+    let interior_count = readings.len();
+    let coherent_count = readings.iter().filter(|r| r.coherent).count();
+    let coherence_ratio = if interior_count == 0 {
         0.0
     } else {
-        let total_k: usize = source_types.iter()
-            .map(|t| k_per_token.get(t).copied().unwrap_or(0))
-            .sum();
-        total_k as f64 / source_types.len() as f64
+        coherent_count as f64 / interior_count as f64
     };
 
     CoherenceResult {
         tokens,
         rho_acc,
-        k_per_token,
-        mean_k,
-        total_pairs_evaluated,
-        total_admitted,
+        readings,
+        coherence_ratio,
+        coherent_count,
+        interior_count,
     }
 }
 
@@ -138,19 +178,24 @@ pub fn format_report(r: &CoherenceResult) -> String {
     let mut out = String::new();
 
     out.push_str(&format!("Tokens:              {}\n", r.tokens.len()));
-    out.push_str(&format!("Unique token types:  {}\n",
-        r.tokens.iter().collect::<std::collections::HashSet<_>>().len()));
-    out.push_str(&format!("Pairs evaluated:     {}\n", r.total_pairs_evaluated));
-    out.push_str(&format!("Admitted edges:      {}\n", r.total_admitted));
-    out.push_str(&format!("Mean k:              {:.4}\n", r.mean_k));
+    out.push_str(&format!("Interior loci:       {}\n", r.interior_count));
+    out.push_str(&format!("Coherent loci:       {}\n", r.coherent_count));
+    out.push_str(&format!("Coherence ratio:     {:.4}\n", r.coherence_ratio));
+    out.push_str("\nLocus-by-locus field reading:\n");
 
-    // Show k per token type, sorted descending.
-    let mut k_sorted: Vec<(&String, &usize)> = r.k_per_token.iter().collect();
-    k_sorted.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
-
-    out.push_str("k per source token:\n");
-    for (token, k) in &k_sorted {
-        out.push_str(&format!("  {:>12} : k={}\n", token, k));
+    for reading in &r.readings {
+        let status = if reading.coherent { "COH" } else { "INC" };
+        let l_mark = if reading.left_grounded  { "G" } else { "U" };
+        let r_mark = if reading.right_grounded { "G" } else { "U" };
+        out.push_str(&format!(
+            "  [{:>3}] {:<12} [{:<12}] {:<12}  L:{} R:{} → {}\n",
+            reading.position,
+            reading.left,
+            reading.center,
+            reading.right,
+            l_mark, r_mark,
+            status
+        ));
     }
 
     out
@@ -161,7 +206,7 @@ mod tests {
     use super::*;
 
     fn default_config() -> CoherenceConfig {
-        CoherenceConfig { window: 4, theta_min: 0.05, eta: 0.1, passes: 20 }
+        CoherenceConfig { theta_min: 0.05, eta: 0.1 }
     }
 
     #[test]
@@ -171,80 +216,69 @@ mod tests {
     }
 
     #[test]
-    fn empty_text_produces_zero_mean_k() {
+    fn empty_text_produces_zero_ratio() {
         let r = measure_coherence("", &default_config());
-        assert_eq!(r.mean_k, 0.0);
+        assert_eq!(r.coherence_ratio, 0.0);
     }
 
     #[test]
-    fn single_token_produces_zero_admitted_edges() {
-        let r = measure_coherence("hello", &default_config());
-        assert_eq!(r.total_admitted, 0);
+    fn two_tokens_produces_no_interior_loci() {
+        let r = measure_coherence("hello world", &default_config());
+        assert_eq!(r.interior_count, 0);
     }
 
     #[test]
-    fn rho_acc_accumulates_and_stays_bounded() {
-        let r = measure_coherence("the cat sat on the mat", &default_config());
+    fn rho_acc_stays_bounded() {
+        let r = measure_coherence("the cat sat on the mat the cat sat", &default_config());
         for &v in r.rho_acc.values() {
             assert!(v >= 0.0 && v <= 1.0, "ρ_acc out of bounds: {}", v);
         }
     }
 
     #[test]
-    fn repeated_pairs_accumulate_above_theta_min() {
-        // "the cat" appears multiple times — should be admitted.
-        let text = "the cat sat on the mat the cat looked the cat";
+    fn repeated_sequence_produces_high_coherence() {
+        // Heavy repetition — all pairs grounded quickly.
+        let text = "the cat sat on the mat the cat sat on the mat";
         let r = measure_coherence(text, &default_config());
-        let key = ("the".to_string(), "cat".to_string());
-        let rho = r.rho_acc.get(&key).copied().unwrap_or(0.0);
-        assert!(rho >= 0.05, "repeated pair 'the→cat' should be admitted: ρ={:.4}", rho);
+        assert!(r.coherence_ratio > 0.5,
+            "repeated text should produce high coherence ratio: {:.4}", r.coherence_ratio);
     }
 
     #[test]
-    fn coherent_text_lower_mean_k_than_shuffled() {
-        let coherent = "the cat sat on the mat the cat looked at the mat \
-                        the mat was under the cat the cat sat still";
-        let incoherent = "mat the on cat sat the looked cat the mat the \
-                          was mat under cat the still sat cat the";
+    fn first_pair_accumulates_on_first_encounter() {
+        // η=0.1 > θ_min=0.05: first encounter should ground a pair.
+        let r = measure_coherence("a b c", &default_config());
+        let ab = r.rho_acc.get(&("a".to_string(), "b".to_string())).copied().unwrap_or(0.0);
+        assert!(ab >= 0.05, "pair a→b should be grounded on first encounter: ρ={:.4}", ab);
+    }
+
+    #[test]
+    fn keying_is_by_identity_not_position() {
+        // Same token pair at different positions should share ρ_acc.
+        let r = measure_coherence("cat sat mat cat sat", &default_config());
+        let cs = r.rho_acc.get(&("cat".to_string(), "sat".to_string())).copied().unwrap_or(0.0);
+        // Pair (cat, sat) appears twice — should accumulate above single-encounter level.
+        let single = 0.1_f64;
+        let double = single + 0.1 * (1.0 - single);
+        assert!((cs - double).abs() < 1e-10,
+            "ρ_acc(cat,sat) should reflect two encounters: expected {:.4}, got {:.4}", double, cs);
+    }
+
+    #[test]
+    fn incoherent_text_produces_lower_ratio_than_coherent() {
+        let coherent   = "the cat sat on the mat the cat sat on the mat";
+        let incoherent = "purple longitude decided fork sleeping eleven clouds argued Wednesday";
         let config = default_config();
         let r_c = measure_coherence(coherent,   &config);
         let r_i = measure_coherence(incoherent, &config);
-        assert!(r_c.mean_k <= r_i.mean_k,
-            "coherent mean_k={:.4} should be <= incoherent mean_k={:.4}",
-            r_c.mean_k, r_i.mean_k);
+        assert!(r_c.coherence_ratio >= r_i.coherence_ratio,
+            "coherent ratio={:.4} should be >= incoherent ratio={:.4}",
+            r_c.coherence_ratio, r_i.coherence_ratio);
     }
 
     #[test]
-    fn keying_is_by_token_identity_not_position() {
-        // Two sequences with the same token pairs in different positions
-        // should produce the same ρ_acc values.
-        let config = CoherenceConfig { window: 2, theta_min: 0.05, eta: 0.1, passes: 5 };
-        let r1 = measure_coherence("a b c", &config);
-        let r2 = measure_coherence("a b c", &config);
-        let k1 = r1.rho_acc.get(&("a".to_string(), "b".to_string())).copied().unwrap_or(0.0);
-        let k2 = r2.rho_acc.get(&("a".to_string(), "b".to_string())).copied().unwrap_or(0.0);
-        assert!((k1 - k2).abs() < 1e-10);
-    }
-
-    #[test]
-    fn mean_k_zero_for_all_unique_tokens_no_repetition() {
-        // With passes=1 and no repetition, each pair appears once.
-        // At η=0.1, ρ_acc = 0.1 > θ_min=0.05, so edges ARE admitted.
-        // This tests that the accumulation actually fires.
-        let config = CoherenceConfig { window: 1, theta_min: 0.05, eta: 0.1, passes: 1 };
-        let r = measure_coherence("a b c d e", &config);
-        // Each adjacent pair fires once: ρ_acc = 0.1 >= 0.05, so admitted.
-        assert!(r.total_admitted > 0);
-    }
-
-    #[test]
-    fn window_limits_evaluated_pairs() {
-        let config_w1 = CoherenceConfig { window: 1, theta_min: 0.05, eta: 0.1, passes: 1 };
-        let config_w4 = CoherenceConfig { window: 4, theta_min: 0.05, eta: 0.1, passes: 1 };
-        let text = "a b c d e f g h";
-        let r1 = measure_coherence(text, &config_w1);
-        let r4 = measure_coherence(text, &config_w4);
-        assert!(r4.total_pairs_evaluated > r1.total_pairs_evaluated,
-            "wider window must evaluate more pairs");
+    fn three_token_minimum_produces_one_reading() {
+        let r = measure_coherence("a b c", &default_config());
+        assert_eq!(r.interior_count, 1);
     }
 }

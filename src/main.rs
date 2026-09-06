@@ -1,87 +1,140 @@
 // main.rs — Metatron Dynamics, Inc.
-// ABR Language Structure — V1.0
+// ABR Language Structure — V3.1
 // Bounded over D. No claim beyond D.
 //
-// Declaration:
-//   Coherence is a relational property, not a linguistic one.
-//   Two loci are coherent if their co-occurrence in the declared
-//   sequence is stable across exposures.
-//
-//   M measures the state at each locus as the token identity.
-//   No embedding. No borrowed structure.
-//
-//   ρ_n(i,j) = 1.0 if token j appears within declared proximity
-//              of token i in this pass. 0.0 otherwise.
-//
-//   Accumulation rule (Origin-declared):
-//     ρ_acc(i,j) ← ρ_acc(i,j) + η · ρ_n(i,j) · (1 − ρ_acc(i,j))
-//
-//   Admission: ρ_acc(i,j) >= θ_min
-//
-//   k per locus: count of j admitted from locus i.
-//   Mean k: average across all loci.
-//
-// Open Conditions:
-//   OC-COH-1: proximity window W is Origin-declared, not derived.
-//             Its value is an open condition.
-//   OC-COH-2: θ_min calibration — currently inherited from
-//             abr-relational-attention (0.05). Not yet measured
-//             from this domain.
-//   OC-COH-3: single-pass ρ_n ∈ {0,1} is the simplest declaration.
-//             A graded ρ_n (e.g. decaying with distance within W)
-//             is a candidate for Phase 2.
+// Controlled intervention experiment.
+// Same operator at character, word, and sentence scale.
+// Ground truth known — we performed the intervention.
 
 mod coherence;
-use coherence::{CoherenceConfig, measure_coherence, format_report};
+mod character;
+mod state;
+mod intervention;
+
+use character::{CharConfig, edge_profile as char_edge_profile,
+                compare_profiles, format_comparison};
+use intervention::{
+    Sequence, Intervention, apply, edge_profile, compare,
+    format_intervention_report,
+};
+
+fn run_intervention(
+    seq: &Sequence,
+    iv:  &Intervention,
+    scale: &str,
+) {
+    let variant  = apply(seq, iv);
+    let ref_prof = edge_profile(seq);
+    let var_prof = edge_profile(&variant);
+    let delta    = compare(&ref_prof, &var_prof);
+    print!("{}", format_intervention_report(
+        seq, &variant, &ref_prof, &var_prof, &delta, iv
+    ));
+    println!("  Scale: {}", scale);
+    println!();
+}
 
 fn main() {
-    let config = CoherenceConfig {
-        window: 4,
-        theta_min: 0.05,
-        eta: 0.1,
-        passes: 20,
-    };
-
-    // Coherent passage — plain English, natural structure
-    let coherent = "the cat sat on the mat the cat looked at the mat \
-                    the mat was under the cat the cat sat still";
-
-    // Incoherent passage — same words, order destroyed
-    let incoherent = "mat the on cat sat the looked cat the mat the \
-                      was mat under cat the still sat cat the";
-
-    println!("ABR Language Structure — V1.0");
+    println!("ABR Language Structure — V3.1");
     println!("Metatron Dynamics, Inc. Bounded over D. No claim beyond D.");
-    println!("Window W={}, θ_min={}, η={}, passes={}",
-        config.window, config.theta_min, config.eta, config.passes);
+    println!("Controlled intervention experiment.");
+    println!("Observable: Δ(declared relations) under known interventions.");
+    println!("Scale invariance test: same operator at all resolutions.");
     println!();
 
-    let r_coherent   = measure_coherence(coherent,   &config);
-    let r_incoherent = measure_coherence(incoherent, &config);
-
-    println!("── Coherent passage ─────────────────────────────────────────");
-    print!("{}", format_report(&r_coherent));
+    // ── Character scale ───────────────────────────────────────────────
+    println!("════════════════════════════════════════════════════════════");
+    println!("SCALE: Character");
+    println!("════════════════════════════════════════════════════════════");
     println!();
 
-    println!("── Incoherent passage ───────────────────────────────────────");
-    print!("{}", format_report(&r_incoherent));
-    println!();
+    let char_config = CharConfig { theta_min: 0.05, eta: 0.1 };
 
-    println!("── Comparison ───────────────────────────────────────────────");
-    println!("Mean k (coherent):   {:.4}", r_coherent.mean_k);
-    println!("Mean k (incoherent): {:.4}", r_incoherent.mean_k);
-    if r_coherent.mean_k < r_incoherent.mean_k {
-        println!("Result: coherent text admits narrower relational width.");
-        println!("Structural reduction available: {:.2}x",
-            r_incoherent.mean_k / r_coherent.mean_k);
-    } else {
-        println!("Result: no separation observed at these parameters.");
-        println!("Open condition OC-COH-1 (window) or OC-COH-2 (θ_min) \
-                  may require revision.");
+    // Retained from V2.2 — character edge profile comparison.
+    let char_pairs = vec![
+        ("clean",  "problem",   "Transposition(1,2)", "porblem"),
+        ("clean",  "difficult", "disrupted",          "dificfult"),
+    ];
+    for (rl, rt, vl, vt) in &char_pairs {
+        let rp    = char_edge_profile(rt, &char_config);
+        let vp    = char_edge_profile(vt, &char_config);
+        let delta = compare_profiles(&rp, &vp);
+        print!("{}", format_comparison(rl, rt, vl, vt, &rp, &vp, &delta));
+        println!();
     }
+
+    // Also via intervention module at character scale.
+    let problem = Sequence::from_chars("problem", "problem");
+    run_intervention(
+        &problem,
+        &Intervention::Transposition(1, 2),
+        "character",
+    );
+
+    // ── Word scale ────────────────────────────────────────────────────
+    println!("════════════════════════════════════════════════════════════");
+    println!("SCALE: Word");
+    println!("Base: \"the dog chased the ball\"");
+    println!("Same intervention types as character scale.");
+    println!("════════════════════════════════════════════════════════════");
     println!();
-    println!("OC-COH-1 OPEN: window W={} is declared, not derived.", config.window);
-    println!("OC-COH-2 OPEN: θ_min={} inherited, not yet calibrated for this domain.",
-        config.theta_min);
-    println!("OC-COH-3 OPEN: binary ρ_n — graded decay is Phase 2 candidate.");
+
+    let base_word = Sequence::from_words(
+        "the dog chased the ball", "the dog chased the ball"
+    );
+
+    // Transposition(1,2): dog ↔ chased
+    run_intervention(&base_word, &Intervention::Transposition(1, 2), "word");
+
+    // Transposition(3,4): the ↔ ball (end swap)
+    run_intervention(&base_word, &Intervention::Transposition(3, 4), "word");
+
+    // Displacement(2,4): move "chased" to end
+    run_intervention(&base_word, &Intervention::Displacement(2, 4), "word");
+
+    // Transposition(0,4): the ↔ ball (full inversion of ends)
+    run_intervention(&base_word, &Intervention::Transposition(0, 4), "word");
+
+    // ── Sentence scale ────────────────────────────────────────────────
+    println!("════════════════════════════════════════════════════════════");
+    println!("SCALE: Sentence");
+    println!("Base: four-sentence causal progression.");
+    println!("Same intervention types as word and character scale.");
+    println!("════════════════════════════════════════════════════════════");
+    println!();
+
+    let base_sent = Sequence::from_sentences(vec![
+        "John picked up the glass",
+        "He carried it into the kitchen",
+        "The glass slipped from his hand",
+        "It shattered",
+    ], "glass sequence");
+
+    // Transposition(2,3): swap last two sentences — disrupts causal close
+    run_intervention(&base_sent, &Intervention::Transposition(2, 3), "sentence");
+
+    // Transposition(0,3): swap first and last — maximum disruption
+    run_intervention(&base_sent, &Intervention::Transposition(0, 3), "sentence");
+
+    // Displacement(3,1): move "It shattered" to position 1
+    run_intervention(&base_sent, &Intervention::Displacement(3, 1), "sentence");
+
+    // Identity check — no intervention
+    let identical = base_sent.clone();
+    let ref_prof  = edge_profile(&base_sent);
+    let var_prof  = edge_profile(&identical);
+    let delta     = compare(&ref_prof, &var_prof);
+    println!("── Identity check (no intervention) ─────────────────────────────");
+    println!("  Disrupted: {} / {}", delta.disruption_count, delta.compared);
+    println!("  Expected: 0 disruptions.");
+    println!();
+
+    println!("── Open Conditions ──────────────────────────────────────────");
+    println!("OC-INT-1: Adjacency-only edge profiles declared.");
+    println!("          Long-range dependencies: Phase 2.");
+    println!("OC-INT-2: Locus identity keys edges only — not semantic.");
+    println!("OC-INT-3: Ground truth known — researcher performed intervention.");
+    println!("OC-SCALE: Scale invariance hypothesis: same Δ quantity responds");
+    println!("          to same intervention type at all resolutions.");
+    println!("          Character result established. Word and sentence: this run.");
 }
